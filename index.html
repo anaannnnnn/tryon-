@@ -1,0 +1,606 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Jewelry Virtual Try-On</title>
+<style>
+  html,body{height:100%;margin:0;background:#0d0d11;color:#eee;font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-tap-highlight-color:transparent}
+  #app{height:100vh;height:100dvh;display:flex;flex-direction:column}
+  #wrap{flex:1;min-height:0;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#000}
+  #stage{position:relative;transform:scaleX(-1);visibility:hidden}
+  #stage.live{visibility:visible}
+  #video,#gl{position:absolute;inset:0;width:100%;height:100%}
+  #gl{pointer-events:none}
+  #intro{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;background:radial-gradient(circle at 50% 30%,#23202b,#0d0d11)}
+  #intro h1{margin:0 0 8px;font-size:22px;font-weight:600;letter-spacing:.3px}
+  #intro p{margin:0 0 18px;max-width:340px;color:#b9b6c2}
+  #start{background:#e7b94b;color:#1b1405;border:0;border-radius:999px;padding:14px 28px;font-size:16px;font-weight:600;cursor:pointer}
+  #start:disabled{opacity:.6}
+  #err{color:#ff8a8a;margin-top:14px;max-width:340px;min-height:1em}
+  #hud{position:absolute;top:10px;right:10px;display:none;gap:8px;align-items:center}
+  #hud.on{display:flex}
+  .chip{width:30px;height:30px;border-radius:50%;border:2px solid rgba(255,255,255,.35);cursor:pointer;padding:0}
+  .chip.on{border-color:#fff;box-shadow:0 0 0 2px rgba(0,0,0,.4)}
+  .btn{background:rgba(20,20,26,.7);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:999px;height:34px;padding:0 12px;font-size:15px;cursor:pointer;backdrop-filter:blur(6px)}
+  #status{position:absolute;left:10px;top:10px;background:rgba(20,20,26,.7);border-radius:999px;padding:6px 12px;font-size:12px;display:none;backdrop-filter:blur(6px)}
+  #status.on{display:block}
+  #tune{display:none;padding:8px 14px;background:#15151b;border-top:1px solid #26262f}
+  #tune.on{display:block}
+  #tune label{display:flex;align-items:center;gap:10px;font-size:12px;color:#b9b6c2;margin:4px 0}
+  #tune label span{width:110px}
+  #tune input{flex:1}
+  #panel{background:#111116;border-top:1px solid #26262f;padding-bottom:env(safe-area-inset-bottom)}
+  #tabs{display:flex}
+  #tabs button{flex:1;background:none;border:0;color:#8d8a97;padding:11px 0;font-size:14px;font-weight:600;border-bottom:2px solid transparent;cursor:pointer}
+  #tabs button.on{color:#fff;border-color:#e7b94b}
+  .row{display:none;gap:10px;overflow-x:auto;padding:10px 12px 12px;scrollbar-width:none}
+  .row.on{display:flex}
+  .row::-webkit-scrollbar{display:none}
+  .card{flex:0 0 82px;background:#1a1a22;border:2px solid transparent;border-radius:12px;padding:6px 4px 6px;color:#ccc;font-size:11px;text-align:center;cursor:pointer}
+  .card img{width:68px;height:68px;display:block;margin:0 auto 4px;object-fit:contain}
+  .card.on{border-color:#e7b94b;color:#fff}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+  <div id="wrap">
+    <div id="stage">
+      <video id="video" playsinline muted autoplay></video>
+      <canvas id="gl"></canvas>
+    </div>
+    <div id="intro">
+      <h1>Virtual Jewelry Try-On</h1>
+      <p>Live camera, face tracking and 3D jewelry. Nothing is uploaded; everything runs in your browser.</p>
+      <button id="start">Start camera</button>
+      <div id="err"></div>
+    </div>
+    <div id="status"></div>
+    <div id="hud">
+      <button class="chip" data-metal="gold" style="background:#e7b94b" title="Gold"></button>
+      <button class="chip" data-metal="rose" style="background:#e3a38e" title="Rose gold"></button>
+      <button class="chip" data-metal="silver" style="background:#e9eaf0" title="Silver"></button>
+      <button class="btn" id="tuneBtn" title="Fine-tune">&#9881;</button>
+      <button class="btn" id="snapBtn" title="Save photo">&#128247;</button>
+    </div>
+  </div>
+  <div id="tune">
+    <label><span>Earring height</span><input id="earY" type="range" min="-0.12" max="0.12" step="0.005" value="0"></label>
+    <label><span>Necklace height</span><input id="neckY" type="range" min="-0.25" max="0.25" step="0.005" value="0"></label>
+    <label><span>Size</span><input id="size" type="range" min="0.7" max="1.6" step="0.02" value="1"></label>
+  </div>
+  <div id="panel">
+    <div id="tabs">
+      <button data-tab="ear" class="on">Earrings</button>
+      <button data-tab="neck">Necklaces</button>
+    </div>
+    <div class="row on" id="rowEar"></div>
+    <div class="row" id="rowNeck"></div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { FilesetResolver, FaceLandmarker, PoseLandmarker } from '@mediapipe/tasks-vision';
+
+// ==BUILDERS-START==
+// All jewelry is built in code (no downloads, no licensing). Unit = one face width.
+// Earrings hang down from the origin (earlobe). Necklaces use the origin at the base of the neck, +y up.
+const METALS = { gold: 0xe7b94b, rose: 0xe3a38e, silver: 0xe9eaf0 };
+const M = {
+  metal: new THREE.MeshStandardMaterial({ color: METALS.gold, metalness: 1, roughness: 0.2, envMapIntensity: 1.2, side: THREE.DoubleSide }),
+  pearl: new THREE.MeshPhysicalMaterial({ color: 0xf7f1e8, metalness: 0, roughness: 0.22, clearcoat: 1, clearcoatRoughness: 0.15, sheen: 1, sheenColor: new THREE.Color(0xffe6f0) }),
+  diamond: new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: 0.03, flatShading: true, envMapIntensity: 1.8 }),
+  emerald: new THREE.MeshPhysicalMaterial({ color: 0x0c9c63, metalness: 0.15, roughness: 0.06, clearcoat: 1, flatShading: true, envMapIntensity: 1.6 }),
+  ruby: new THREE.MeshPhysicalMaterial({ color: 0xc2113a, metalness: 0.15, roughness: 0.06, clearcoat: 1, flatShading: true, envMapIntensity: 1.6 }),
+  crystal: new THREE.MeshPhysicalMaterial({ color: 0x8fd0ff, metalness: 0.3, roughness: 0.04, clearcoat: 1, flatShading: true, envMapIntensity: 1.8 }),
+};
+
+const V = (x, y, z = 0) => new THREE.Vector3(x, y, z);
+const mesh = (geo, mat) => new THREE.Mesh(geo, mat);
+function sphere(r, mat, x = 0, y = 0, z = 0) { const m = mesh(new THREE.SphereGeometry(r, 24, 18), mat); m.position.set(x, y, z); return m; }
+function ring(r, t, mat, x = 0, y = 0, z = 0) { const m = mesh(new THREE.TorusGeometry(r, t, 12, 40), mat); m.position.set(x, y, z); return m; }
+
+// Round brilliant approximation, table on +y, tip on -y.
+function brilliant(r, mat) {
+  const g = new THREE.Group();
+  const crown = mesh(new THREE.CylinderGeometry(r * 0.62, r, r * 0.38, 8, 1), mat);
+  crown.position.y = r * 0.19;
+  const pav = mesh(new THREE.ConeGeometry(r, r * 0.85, 8, 1), mat);
+  pav.rotation.x = Math.PI; pav.position.y = -r * 0.425;
+  g.add(crown, pav);
+  return g;
+}
+// Same stone, turned so the table faces the camera (+z).
+function gemFacing(r, mat, x, y, z = 0) { const b = brilliant(r, mat); b.rotation.x = Math.PI / 2; b.position.set(x, y, z); return b; }
+
+// Pear-shaped faceted stone, point up, round end down.
+function teardropGeo(w, h) {
+  const pts = []; const n = 26;
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    pts.push(new THREE.Vector2(Math.max(0.0001, w * Math.sin(Math.PI * Math.pow(t, 0.7))), (t - 0.5) * h));
+  }
+  return new THREE.LatheGeometry(pts, 10);
+}
+function heartGeo(s) {
+  const sh = new THREE.Shape();
+  sh.moveTo(0, -1);
+  sh.bezierCurveTo(-0.3, -0.7, -1, -0.2, -1, 0.35);
+  sh.bezierCurveTo(-1, 0.85, -0.45, 1.0, 0, 0.58);
+  sh.bezierCurveTo(0.45, 1.0, 1, 0.85, 1, 0.35);
+  sh.bezierCurveTo(1, -0.2, 0.3, -0.7, 0, -1);
+  const g = new THREE.ExtrudeGeometry(sh, { depth: 0.35, bevelEnabled: true, bevelThickness: 0.12, bevelSize: 0.1, bevelSegments: 4, curveSegments: 24 });
+  g.center(); g.scale(s, s, s);
+  return g;
+}
+function tube(points, radius, mat, segs = 120) {
+  const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal');
+  return { mesh: mesh(new THREE.TubeGeometry(curve, segs, radius, 8, false), mat), curve };
+}
+// U-shaped path around the neck. Lowest point at (0, -drop). Ends rise to `top` at +-halfW.
+function arcPath(halfW, top, drop, zOff = 0, n = 28) {
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const t = (i / n) * 2 - 1, a = Math.abs(t);
+    pts.push(V(t * halfW, -drop + (top + drop) * Math.pow(a, 2.2), 0.09 * (1 - a * a) - 0.04 + zOff));
+  }
+  return pts;
+}
+
+/* ---------------- Earrings (side = -1 image-left ear, +1 image-right ear) ---------------- */
+function earHoop(side) {
+  const g = new THREE.Group(); const R = 0.11;
+  g.add(sphere(0.012, M.metal));
+  const w = new THREE.Group(); w.rotation.y = side * 0.8;
+  w.add(ring(R, 0.0085, M.metal, 0, -R - 0.004, 0));
+  g.add(w);
+  return g;
+}
+function earPearl() {
+  const g = new THREE.Group();
+  g.add(sphere(0.012, M.metal));
+  g.add(tube([V(0, -0.004), V(0, -0.045)], 0.0025, M.metal, 8).mesh);
+  const cap = mesh(new THREE.CylinderGeometry(0.01, 0.007, 0.014, 16), M.metal); cap.position.y = -0.047; g.add(cap);
+  g.add(sphere(0.034, M.pearl, 0, -0.085, 0));
+  return g;
+}
+function earStud() {
+  const g = new THREE.Group();
+  g.add(gemFacing(0.032, M.diamond, 0, -0.014));
+  g.add(ring(0.036, 0.0045, M.metal, 0, -0.014, -0.002));
+  for (let k = 0; k < 10; k++) {
+    const a = (k / 10) * Math.PI * 2;
+    g.add(gemFacing(0.009, M.diamond, Math.cos(a) * 0.053, -0.014 + Math.sin(a) * 0.053, 0));
+  }
+  return g;
+}
+function earJhumka() {
+  const g = new THREE.Group();
+  g.add(sphere(0.014, M.metal));
+  const disc = mesh(new THREE.CylinderGeometry(0.034, 0.034, 0.006, 24), M.metal);
+  disc.rotation.x = Math.PI / 2; disc.position.set(0, -0.03, 0); g.add(disc);
+  g.add(gemFacing(0.012, M.ruby, 0, -0.03, 0.005));
+  const rimY = -0.085, R = 0.055;
+  const dome = mesh(new THREE.SphereGeometry(R, 32, 20, 0, Math.PI * 2, 0, Math.PI / 2), M.metal);
+  dome.position.y = rimY; g.add(dome);
+  for (let k = 0; k < 14; k++) { const a = (k / 14) * Math.PI * 2; g.add(sphere(0.0058, M.metal, Math.cos(a) * R, rimY, Math.sin(a) * R)); }
+  const h = 0.032, rr = Math.sqrt(R * R - h * h);
+  const band = ring(rr, 0.003, M.metal, 0, rimY + h, 0); band.rotation.x = Math.PI / 2; g.add(band);
+  for (let k = 0; k < 10; k++) { const a = (k / 10) * Math.PI * 2; g.add(sphere(0.0048, M.ruby, Math.cos(a) * rr, rimY + h, Math.sin(a) * rr)); }
+  for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * Math.PI * 2, x = Math.cos(a) * (R - 0.004), z = Math.sin(a) * (R - 0.004);
+    g.add(tube([V(x, rimY, z), V(x, rimY - 0.022, z)], 0.0015, M.metal, 4).mesh);
+    g.add(sphere(0.0078, M.pearl, x, rimY - 0.03, z));
+  }
+  g.add(sphere(0.012, M.pearl, 0, rimY - 0.04, 0));
+  g.scale.setScalar(1.35);
+  return g;
+}
+function earEmerald() {
+  const g = new THREE.Group();
+  g.add(gemFacing(0.015, M.diamond, 0, -0.012));
+  g.add(ring(0.018, 0.0035, M.metal, 0, -0.012, -0.001));
+  g.add(ring(0.008, 0.0025, M.metal, 0, -0.04, 0));
+  const e = mesh(teardropGeo(0.034, 0.1), M.emerald); e.position.y = -0.092; g.add(e);
+  g.scale.setScalar(1.25);
+  return g;
+}
+function earCrystal() {
+  const g = new THREE.Group();
+  g.add(sphere(0.011, M.metal));
+  g.add(gemFacing(0.02, M.diamond, 0, -0.04));
+  g.add(ring(0.006, 0.002, M.metal, 0, -0.07, 0));
+  g.add(gemFacing(0.026, M.crystal, 0, -0.1));
+  g.add(ring(0.006, 0.002, M.metal, 0, -0.132, 0));
+  const t = mesh(teardropGeo(0.024, 0.075), M.crystal); t.position.y = -0.172; g.add(t);
+  g.scale.setScalar(1.2);
+  return g;
+}
+
+/* ---------------- Necklaces ---------------- */
+function neckSolitaire() {
+  const g = new THREE.Group(); const c = tube(arcPath(0.40, 0.48, 0.30), 0.0042, M.metal, 160);
+  g.add(c.mesh);
+  const z = 0.05;
+  g.add(ring(0.007, 0.0025, M.metal, 0, -0.306, z));
+  g.add(gemFacing(0.034, M.diamond, 0, -0.35, z + 0.01));
+  g.add(ring(0.038, 0.0045, M.metal, 0, -0.35, z + 0.004));
+  return g;
+}
+function neckPearls() {
+  const g = new THREE.Group(); const c = tube(arcPath(0.43, 0.47, 0.22), 0.0016, M.metal, 160);
+  g.add(c.mesh);
+  const n = Math.round(c.curve.getLength() / 0.043);
+  for (let i = 0; i <= n; i++) { const p = c.curve.getPointAt(i / n); g.add(sphere(0.0215, M.pearl, p.x, p.y, p.z)); }
+  return g;
+}
+function neckHeart() {
+  const g = new THREE.Group(); const c = tube(arcPath(0.40, 0.48, 0.26), 0.0038, M.metal, 160);
+  g.add(c.mesh);
+  const z = 0.05;
+  g.add(ring(0.007, 0.0025, M.metal, 0, -0.266, z));
+  const h = mesh(heartGeo(0.05), M.metal); h.position.set(0, -0.318, z + 0.01); g.add(h);
+  return g;
+}
+function neckEmerald() {
+  const g = new THREE.Group(); const c = tube(arcPath(0.44, 0.50, 0.34), 0.0045, M.metal, 160);
+  g.add(c.mesh);
+  for (let k = -3; k <= 3; k++) { const p = c.curve.getPointAt(0.5 + k * 0.035); g.add(gemFacing(0.011, M.diamond, p.x, p.y, p.z + 0.006)); }
+  const z = 0.05;
+  g.add(gemFacing(0.021, M.diamond, 0, -0.365, z + 0.01));
+  g.add(ring(0.024, 0.0035, M.metal, 0, -0.365, z + 0.004));
+  const e = mesh(teardropGeo(0.05, 0.14), M.emerald); e.position.set(0, -0.455, z + 0.01); g.add(e);
+  return g;
+}
+function neckLayered() {
+  const g = new THREE.Group();
+  const a = tube(arcPath(0.41, 0.50, 0.15, 0.02), 0.0035, M.metal, 160); g.add(a.mesh);
+  g.add(gemFacing(0.014, M.diamond, 0, -0.17, 0.075));
+  const b = tube(arcPath(0.45, 0.54, 0.34), 0.0035, M.metal, 160); g.add(b.mesh);
+  const z = 0.05;
+  g.add(ring(0.007, 0.0025, M.metal, 0, -0.346, z));
+  const coin = mesh(new THREE.CylinderGeometry(0.042, 0.042, 0.008, 32), M.metal);
+  coin.rotation.x = Math.PI / 2; coin.position.set(0, -0.39, z + 0.004); g.add(coin);
+  g.add(ring(0.03, 0.0025, M.metal, 0, -0.39, z + 0.01));
+  return g;
+}
+function neckTennis() {
+  const g = new THREE.Group(); const c = tube(arcPath(0.38, 0.46, 0.12), 0.003, M.metal, 160);
+  g.add(c.mesh);
+  const n = Math.round(c.curve.getLength() / 0.03);
+  for (let i = 0; i <= n; i++) { const p = c.curve.getPointAt(i / n); g.add(gemFacing(0.0145, M.diamond, p.x, p.y, p.z + 0.004)); }
+  return g;
+}
+
+const EARRINGS = [
+  { id: 'hoop', name: 'Gold Hoops', build: earHoop },
+  { id: 'pearl', name: 'Pearl Drops', build: earPearl },
+  { id: 'stud', name: 'Diamond Studs', build: earStud },
+  { id: 'jhumka', name: 'Jhumkas', build: earJhumka },
+  { id: 'emerald', name: 'Emerald Drops', build: earEmerald },
+  { id: 'crystal', name: 'Crystal Cascade', build: earCrystal },
+];
+const NECKLACES = [
+  { id: 'solitaire', name: 'Solitaire', build: neckSolitaire },
+  { id: 'pearls', name: 'Pearl Strand', build: neckPearls },
+  { id: 'heart', name: 'Heart Pendant', build: neckHeart },
+  { id: 'emerald', name: 'Emerald Statement', build: neckEmerald },
+  { id: 'layered', name: 'Layered Coin', build: neckLayered },
+  { id: 'tennis', name: 'Tennis Choker', build: neckTennis },
+];
+// ==BUILDERS-END==
+
+// Optional: use your own .glb product models instead of the built-in ones.
+// Normalised so the model is `height` units tall (1 = one face width), hanging from its top.
+// Example: EARRINGS.push({ id:'mine', name:'My Earring', build: () => glbProduct('models/earring.glb', 0.2) });
+function glbProduct(url, height = 0.2, hang = true) {
+  const holder = new THREE.Group();
+  import('three/addons/loaders/GLTFLoader.js').then(({ GLTFLoader }) => {
+    new GLTFLoader().load(url, (gltf) => {
+      const m = gltf.scene, box = new THREE.Box3().setFromObject(m), size = box.getSize(new THREE.Vector3());
+      const s = height / (size.y || 1); m.scale.setScalar(s);
+      const b2 = new THREE.Box3().setFromObject(m), c = b2.getCenter(new THREE.Vector3());
+      m.position.x -= c.x; m.position.z -= c.z; m.position.y -= hang ? b2.max.y : c.y;
+      holder.add(m);
+    }, undefined, (e) => console.warn('GLB failed', url, e));
+  });
+  return holder;
+}
+
+/* ---------------- App ---------------- */
+const $ = (s) => document.querySelector(s);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const sstep = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+
+const video = $('#video'), canvas = $('#gl'), stage = $('#stage'), wrap = $('#wrap');
+const statusEl = $('#status'), errEl = $('#err'), startBtn = $('#start');
+let vw = 1280, vh = 720;
+
+const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
+renderer.setClearColor(0x000000, 0);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+const key = new THREE.DirectionalLight(0xffffff, 1.6); key.position.set(0.5, 1, 1.5); scene.add(key);
+const camera = new THREE.OrthographicCamera(0, vw, 0, -vh, 0.1, 5000); camera.position.z = 2000;
+
+const earGroupL = new THREE.Group(), earGroupR = new THREE.Group(), neckGroup = new THREE.Group();
+scene.add(earGroupL, earGroupR, neckGroup);
+
+const state = { earY: 0, neckY: 0, size: 1, sel: { ear: -1, neck: -1 }, metal: 'gold' };
+const sway = { L: { a: 0, v: 0, init: false }, R: { a: 0, v: 0, init: false } };
+
+/* thumbnails: render each product once with the same renderer */
+function makeThumb(group) {
+  const ts = new THREE.Scene(); ts.environment = scene.environment;
+  ts.add(new THREE.AmbientLight(0xffffff, 0.35)); const k = key.clone(); ts.add(k); ts.add(group);
+  const box = new THREE.Box3().setFromObject(group), c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+  const half = Math.max(s.x, s.y) * 0.62 || 0.2;
+  const cam = new THREE.OrthographicCamera(c.x - half, c.x + half, c.y + half, c.y - half, 0.1, 100);
+  cam.position.set(c.x, c.y, 10);
+  renderer.setSize(160, 160, false);
+  renderer.render(ts, cam);
+  const url = canvas.toDataURL('image/png');
+  ts.remove(group);
+  return url;
+}
+const thumbEls = [];
+function renderThumbs() {
+  thumbEls.forEach(({ img, p, kind }) => {
+    const g = kind === 'ear' ? p.build(1) : p.build();
+    if (kind === 'ear') g.rotation.y = 0.35;
+    img.src = makeThumb(g);
+  });
+  renderer.setSize(vw, vh, false);
+}
+function buildCards() {
+  [['ear', EARRINGS, '#rowEar'], ['neck', NECKLACES, '#rowNeck']].forEach(([kind, list, sel]) => {
+    const row = $(sel);
+    list.forEach((p, i) => {
+      const b = document.createElement('button');
+      b.className = 'card'; b.dataset.kind = kind; b.dataset.i = i;
+      b.innerHTML = '<img alt=""><span>' + p.name + '</span>';
+      b.onclick = () => pick(kind, i);
+      row.appendChild(b);
+      thumbEls.push({ img: b.querySelector('img'), p, kind });
+    });
+  });
+}
+function refreshCards() {
+  document.querySelectorAll('.card').forEach((c) => c.classList.toggle('on', state.sel[c.dataset.kind] === +c.dataset.i));
+}
+
+function clearGroup(g) {
+  while (g.children.length) {
+    const c = g.children[0]; g.remove(c);
+    c.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+  }
+}
+function pick(kind, i) {
+  const nxt = state.sel[kind] === i ? -1 : i;
+  state.sel[kind] = nxt;
+  if (kind === 'ear') {
+    clearGroup(earGroupL); clearGroup(earGroupR);
+    sway.L.init = sway.R.init = false; sway.L.a = sway.L.v = sway.R.a = sway.R.v = 0;
+    if (nxt >= 0) { earGroupL.add(EARRINGS[nxt].build(-1)); earGroupR.add(EARRINGS[nxt].build(1)); }
+  } else {
+    clearGroup(neckGroup);
+    if (nxt >= 0) { neckGroup.add(NECKLACES[nxt].build()); ensurePose(); }
+  }
+  refreshCards();
+}
+
+/* ---------------- Tracking ---------------- */
+let faceLM = null, poseLM = null, poseLoading = false, fileset = null;
+let running = false, lastT = -1, face = null, faceT = 0, pose = null, frameN = 0;
+const T = {}; const S = {};
+const sm = (k, v, a = 0.5) => (S[k] = S[k] === undefined ? v : S[k] + (v - S[k]) * a);
+const resetSmooth = () => { for (const k in S) delete S[k]; };
+
+const BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+const POSE_MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+
+async function makeLandmarker(Cls, url, extra) {
+  let last;
+  for (const delegate of ['GPU', 'CPU']) {
+    try { return await Cls.createFromOptions(fileset, { baseOptions: { modelAssetPath: url, delegate }, runningMode: 'VIDEO', ...extra }); }
+    catch (e) { last = e; console.warn(Cls.name, delegate, e); }
+  }
+  throw last;
+}
+async function loadFace() {
+  fileset = await FilesetResolver.forVisionTasks(BASE);
+  faceLM = await makeLandmarker(FaceLandmarker, FACE_MODEL, { numFaces: 1 });
+}
+async function ensurePose() {
+  if (poseLM || poseLoading || !fileset) return;
+  poseLoading = true;
+  try { poseLM = await makeLandmarker(PoseLandmarker, POSE_MODEL, { numPoses: 1 }); }
+  catch (e) { console.warn('Pose unavailable, using face-based neck estimate', e); }
+  poseLoading = false;
+}
+
+function detect() {
+  const now = performance.now();
+  let r;
+  try { r = faceLM.detectForVideo(video, now); } catch (e) { console.warn(e); return; }
+  if (r.faceLandmarks && r.faceLandmarks.length) { face = r.faceLandmarks[0]; faceT = now; } else return;
+  if (poseLM && state.sel.neck >= 0 && frameN++ % 2 === 0) {
+    try {
+      const pr = poseLM.detectForVideo(video, now);
+      const lm = pr.landmarks && pr.landmarks[0];
+      if (lm && (lm[11].visibility ?? 1) > 0.5 && (lm[12].visibility ?? 1) > 0.5) {
+        pose = { ls: { x: lm[11].x * vw, y: lm[11].y * vh }, rs: { x: lm[12].x * vw, y: lm[12].y * vh }, t: now };
+      }
+    } catch (e) { console.warn(e); }
+  }
+  computeTargets(now);
+}
+
+function computeTargets(now) {
+  const P = (i) => ({ x: face[i].x * vw, y: face[i].y * vh, z: face[i].z * vw });
+  let a = P(234), b = P(454); if (a.x > b.x) { const t = a; a = b; b = t; } // a = image-left, b = image-right
+  const chin = P(152);
+  const dx = b.x - a.x, dy = b.y - a.y, fwPx = Math.hypot(dx, dy) || 1;
+  const ux = dx / fwPx, uy = dy / fwPx, dnx = -uy, dny = ux; // dn = "down" along the face
+  const sinY = clamp((b.z - a.z) / fwPx, -1, 1), yaw = Math.asin(sinY);
+  const fw = sm('fw', fwPx / Math.max(Math.cos(yaw), 0.55), 0.4);
+  const roll = Math.atan2(-dy, dx);
+  T.fw = fw; T.yaw = sm('yaw', yaw, 0.4); T.roll = sm('roll', roll, 0.4);
+
+  const drop = (0.15 + state.earY) * fw, out = 0.03 * fw;
+  T.L = { x: sm('lx', a.x - ux * out + dnx * drop, 0.55), y: sm('ly', a.y - uy * out + dny * drop, 0.55) };
+  T.R = { x: sm('rx', b.x + ux * out + dnx * drop, 0.55), y: sm('ry', b.y + uy * out + dny * drop, 0.55) };
+  T.visL = sinY < 0 ? 1 - sstep(0.5, 0.7, -sinY) : 1; // the far ear tucks behind the head
+  T.visR = sinY > 0 ? 1 - sstep(0.5, 0.7, sinY) : 1;
+
+  let nx, ny, nr, used = false;
+  const pz = pose && now - pose.t < 700 ? pose : null;
+  if (pz) {
+    let s1 = pz.ls, s2 = pz.rs; if (s1.x > s2.x) { const t = s1; s1 = s2; s2 = t; }
+    const sdx = s2.x - s1.x, sdy = s2.y - s1.y, sw = Math.hypot(sdx, sdy);
+    if (sw > 1.3 * fw && sw < 7 * fw) {
+      const sux = sdx / sw, suy = sdy / sw;
+      nx = (s1.x + s2.x) / 2 - suy * 0.08 * sw;
+      ny = Math.max((s1.y + s2.y) / 2 + sux * 0.08 * sw, chin.y + 0.4 * fw);
+      nr = Math.atan2(-sdy, sdx); used = true;
+    }
+  }
+  if (!used) { // face-only fallback: neck base sits about 0.72 face-widths below the chin
+    const vx = 0.5 * dnx, vy = 0.5 * dny + 0.5, vl = Math.hypot(vx, vy) || 1;
+    nx = chin.x + (vx / vl) * 0.72 * fw; ny = chin.y + (vy / vl) * 0.72 * fw; nr = roll * 0.5;
+  }
+  T.N = { x: sm('nx', nx, 0.35), y: sm('ny', ny, 0.35) };
+  T.nroll = sm('nr', nr, 0.35);
+}
+
+function placeEar(g, st, pos, vis, fw) {
+  if (!g.children.length || vis < 0.02) { g.visible = false; st.init = false; return; }
+  g.visible = true;
+  g.position.set(pos.x, -pos.y, 0);
+  g.scale.setScalar(fw * state.size * vis);
+  if (!st.init) { st.lx = pos.x; st.init = true; }
+  const dx = (pos.x - st.lx) / fw; st.lx = pos.x;
+  st.v += -dx * 2.2 - st.a * 0.12; st.v *= 0.9;
+  st.a = clamp(st.a + st.v, -0.7, 0.7);
+  g.rotation.set(0, T.yaw * 0.8, st.a); // hangs under gravity, swings when the head moves
+}
+
+function update() {
+  const now = performance.now();
+  const alive = face && now - faceT < 400 && T.fw;
+  if (!alive) {
+    earGroupL.visible = earGroupR.visible = neckGroup.visible = false;
+    if (running) { statusEl.textContent = 'Show your face to the camera'; statusEl.classList.add('on'); }
+    if (face && now - faceT >= 400) { resetSmooth(); }
+    return;
+  }
+  statusEl.classList.remove('on');
+  placeEar(earGroupL, sway.L, T.L, T.visL, T.fw);
+  placeEar(earGroupR, sway.R, T.R, T.visR, T.fw);
+  if (neckGroup.children.length) {
+    neckGroup.visible = true;
+    neckGroup.position.set(T.N.x, -(T.N.y + state.neckY * T.fw), 0);
+    neckGroup.scale.setScalar(T.fw * state.size);
+    neckGroup.rotation.set(0, T.yaw * 0.5, T.nroll);
+  } else neckGroup.visible = false;
+}
+
+function frame() {
+  if (!running) return;
+  requestAnimationFrame(frame);
+  if (video.readyState >= 2 && video.currentTime !== lastT) { lastT = video.currentTime; detect(); }
+  update();
+  renderer.render(scene, camera);
+}
+
+function fitStage() {
+  const r = wrap.getBoundingClientRect(), s = Math.min(r.width / vw, r.height / vh);
+  stage.style.width = Math.floor(vw * s) + 'px'; stage.style.height = Math.floor(vh * s) + 'px';
+}
+
+async function start() {
+  startBtn.disabled = true; errEl.textContent = '';
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Camera needs HTTPS (or localhost).');
+    startBtn.textContent = 'Starting camera…';
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    video.srcObject = stream;
+    await new Promise((res) => { if (video.readyState >= 1) res(); else video.onloadedmetadata = () => res(); });
+    await video.play();
+    vw = video.videoWidth || 1280; vh = video.videoHeight || 720;
+    renderer.setSize(vw, vh, false);
+    camera.left = 0; camera.right = vw; camera.top = 0; camera.bottom = -vh; camera.updateProjectionMatrix();
+    fitStage();
+    startBtn.textContent = 'Loading face tracker…';
+    await loadFace();
+    $('#intro').style.display = 'none';
+    stage.classList.add('live'); $('#hud').classList.add('on');
+    running = true; frame();
+    if (state.sel.neck >= 0) ensurePose();
+  } catch (e) {
+    console.error(e);
+    errEl.textContent = e.name === 'NotAllowedError' ? 'Camera permission was denied. Allow it and try again.' : (e.message || String(e));
+    startBtn.disabled = false; startBtn.textContent = 'Start camera';
+  }
+}
+
+/* ---------------- UI wiring ---------------- */
+startBtn.onclick = start;
+window.addEventListener('resize', fitStage);
+$('#tabs').onclick = (e) => {
+  const b = e.target.closest('button[data-tab]'); if (!b) return;
+  document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('on', x === b));
+  $('#rowEar').classList.toggle('on', b.dataset.tab === 'ear');
+  $('#rowNeck').classList.toggle('on', b.dataset.tab === 'neck');
+  setTimeout(fitStage, 0);
+};
+document.querySelectorAll('.chip').forEach((c) => {
+  c.onclick = () => {
+    state.metal = c.dataset.metal; M.metal.color.setHex(METALS[state.metal]);
+    document.querySelectorAll('.chip').forEach((x) => x.classList.toggle('on', x === c));
+    renderThumbs();
+  };
+});
+document.querySelector('.chip[data-metal="gold"]').classList.add('on');
+$('#tuneBtn').onclick = () => { $('#tune').classList.toggle('on'); setTimeout(fitStage, 0); };
+for (const id of ['earY', 'neckY', 'size']) $('#' + id).oninput = (e) => { state[id] = +e.target.value; };
+$('#snapBtn').onclick = () => {
+  renderer.render(scene, camera);
+  const c = document.createElement('canvas'); c.width = vw; c.height = vh;
+  const x = c.getContext('2d'); x.translate(vw, 0); x.scale(-1, 1);
+  x.drawImage(video, 0, 0, vw, vh); x.drawImage(canvas, 0, 0, vw, vh);
+  const a = document.createElement('a'); a.download = 'tryon.png'; a.href = c.toDataURL('image/png'); a.click();
+};
+
+try {
+  buildCards();
+  renderThumbs();
+  pick('ear', 1);
+  pick('neck', 0);
+} catch (e) {
+  console.error(e);
+  errEl.textContent = 'WebGL is not available in this browser.';
+  startBtn.disabled = true;
+}
+</script>
+</body>
+</html>
+
+</body></html>
